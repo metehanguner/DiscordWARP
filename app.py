@@ -23,6 +23,18 @@ class DiscordWarpApp(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color="#0F172A")  # Modern Dark Theme
 
+        # Set Window Icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            bundled_icon = os.path.join(sys._MEIPASS, "icon.ico")
+            if os.path.exists(bundled_icon):
+                icon_path = bundled_icon
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
+
         self.warp_api = WarpAPI()
         self.tunnel = TunnelManager(CONF_FILE)
         
@@ -254,15 +266,45 @@ class DiscordWarpApp(ctk.CTk):
 
     def connect(self):
         if not self.tunnel.is_installed():
-            messagebox.showerror(
-                "Sürücü Eksik",
-                "WireGuard Windows sürücüsü bulunamadı!\nLütfen WireGuard'ı yükleyin."
+            # Prompt user to automatically download and install WireGuard
+            answer = messagebox.askyesno(
+                "WireGuard Sürücüsü Gerekli",
+                "DiscordWARP tünelinin çalışabilmesi için WireGuard Windows sürücüsü gereklidir.\n\n"
+                "WireGuard sisteminizde bulunamadı.\n"
+                "Şimdi resmi sunuculardan otomatik olarak indirilip kurulsun mu?",
+                icon="question"
             )
-            self.switch_var.set("off")
+            if answer:
+                self.set_connecting_state()
+                self.status_title.configure(text="Sürücü Yükleniyor...")
+                self.status_desc.configure(text="WireGuard kurulumu başlatılıyor...", text_color="#FDE68A")
+                threading.Thread(target=self._async_install_wireguard_and_connect, daemon=True).start()
+            else:
+                self.switch_var.set("off")
             return
 
         self.set_connecting_state()
         threading.Thread(target=self._async_connect, daemon=True).start()
+
+    def _async_install_wireguard_and_connect(self):
+        def update_progress(msg):
+            self.after(0, lambda: self.status_desc.configure(text=msg, text_color="#FDE68A"))
+
+        success, msg = self.tunnel.install_wireguard(progress_callback=update_progress)
+        if success:
+            self.after(0, lambda: self.status_desc.configure(text="WireGuard kuruldu! Tünel başlatılıyor...", text_color="#34D399"))
+            time.sleep(1.0)
+            self._async_connect()
+        else:
+            def show_fail_dialog():
+                self.set_error_state("WireGuard kurulamadı.")
+                if messagebox.askyesno(
+                    "Kurulum Başarısız",
+                    f"{msg}\n\nResmi WireGuard indirme sitesi tarayıcınızda açılsın mı?"
+                ):
+                    import webbrowser
+                    webbrowser.open("https://www.wireguard.com/install/")
+            self.after(0, show_fail_dialog)
 
     def _async_connect(self):
         try:
@@ -380,6 +422,17 @@ class DiscordWarpApp(ctk.CTk):
 
     # --- System Tray Integration ---
     def create_tray_image(self):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            bundled_icon = os.path.join(sys._MEIPASS, "icon.png")
+            if os.path.exists(bundled_icon):
+                icon_path = bundled_icon
+        if os.path.exists(icon_path):
+            try:
+                return Image.open(icon_path).resize((64, 64))
+            except Exception:
+                pass
+
         img = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.ellipse((4, 4, 60, 60), fill='#5865F2', outline='#FFFFFF', width=2)
@@ -461,8 +514,7 @@ class DiscordWarpApp(ctk.CTk):
 
     def open_github(self):
         import webbrowser
-        # Kendi GitHub deponun linkini buraya koyabilirsin
-        webbrowser.open("https://github.com/")
+        webbrowser.open("https://github.com/metehanguner/DiscordWARP")
 
 if __name__ == "__main__":
     import ctypes

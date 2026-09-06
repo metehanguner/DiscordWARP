@@ -7,6 +7,9 @@ import time
 import json
 import urllib.request
 
+import tempfile
+import winreg
+
 CREATE_NO_WINDOW = 0x08000000
 HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
 HOSTS_MARKER_START = "# === DISCORD WARP START ==="
@@ -56,38 +59,174 @@ class TunnelManager:
 
     def find_wireguard(self):
         """Locates the official WireGuard executable on Windows."""
-        default_paths = [
-            r"C:\Program Files\WireGuard\wireguard.exe",
-            r"C:\Program Files (x86)\WireGuard\wireguard.exe"
-        ]
-        for p in default_paths:
-            if os.path.exists(p):
-                return p
-        
-        which_path = shutil.which("wireguard")
-        if which_path:
-            return which_path
+        candidate_paths = []
+
+        # Check standard ProgramFiles environment variables
+        for env_var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            base = os.environ.get(env_var)
+            if base:
+                candidate_paths.append(os.path.join(base, "WireGuard", "wireguard.exe"))
+
+        # Check explicit common drives
+        sys_drive = os.environ.get("SystemDrive", "C:")
+        for drive in (sys_drive, "C:", "D:", "E:"):
+            candidate_paths.append(os.path.join(f"{drive}\\", "Program Files", "WireGuard", "wireguard.exe"))
+            candidate_paths.append(os.path.join(f"{drive}\\", "Program Files (x86)", "WireGuard", "wireguard.exe"))
+
+        # Check Local AppData
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidate_paths.append(os.path.join(local_app_data, "Programs", "WireGuard", "wireguard.exe"))
+
+        # Check all candidate paths
+        for p in candidate_paths:
+            if p and os.path.exists(p):
+                return os.path.normpath(p)
+
+        # Check system PATH
+        for name in ("wireguard", "wireguard.exe"):
+            which_path = shutil.which(name)
+            if which_path and os.path.exists(which_path):
+                return os.path.normpath(which_path)
+
         return None
 
     def is_installed(self):
         self.wireguard_exe = self.find_wireguard()
         return self.wireguard_exe is not None
 
-    def install_wireguard(self):
-        """Installs WireGuard silently via winget if missing without opening CMD windows."""
+    def install_wireguard(self, progress_callback=None):
+        """
+        Installs WireGuard on Windows using a multi-stage approach:
+        1. Attempts silent install via Windows Package Manager (winget).
+        2. Fallback: Downloads official installer from wireguard.com and runs silent install.
+        3. Fallback: Launches interactive installer if silent mode fails.
+        Returns: (success: bool, message: str)
+        """
+        def report(msg):
+            if progress_callback:
+                progress_callback(msg)
+
+        # Already installed?
+        found = self.find_wireguard()
+        if found:
+            self.wireguard_exe = found
+            return True, "WireGuard zaten sisteminizde yüklü."
+
+        # Method 0: Check if installer already exists in the application folder
+        local_candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "wireguard-installer.exe"),
+            os.path.join(os.getcwd(), "wireguard-installer.exe"),
+        ]
+        if getattr(sys, 'frozen', False):
+            local_candidates.append(os.path.join(os.path.dirname(sys.executable), "wireguard-installer.exe"))
+            if hasattr(sys, '_MEIPASS'):
+                local_candidates.append(os.path.join(sys._MEIPASS, "wireguard-installer.exe"))
+
+        for local_installer in local_candidates:
+            if os.path.exists(local_installer):
+                report("Klasördeki WireGuard yükleyicisi kuruluyor...")
+                try:
+                    subprocess.run(
+                        [local_installer, "/quiet"],
+                        capture_output=True,
+                        timeout=90,
+                        creationflags=CREATE_NO_WINDOW
+                    )
+                    for _ in range(10):
+                        time.sleep(2)
+                        found = self.find_wireguard()
+                        if found:
+                            self.wireguard_exe = found
+                            return True, "WireGuard yerel klasörden başarıyla kuruldu."
+                    
+                    # If quiet install didn't complete, try interactive
+                    report("WireGuard kurulum sihirbazı başlatılıyor...")
+                    subprocess.run([local_installer], timeout=120)
+                    time.sleep(2)
+                    found = self.find_wireguard()
+                    if found:
+                        self.wireguard_exe = found
+                        return True, "WireGuard başarıyla kuruldu."
+                except Exception:
+                    pass
+
+        # Method 1: Try winget if available
+        winget_path = shutil.which("winget")
+        if winget_path:
+            report("[1/2] WinGet ile WireGuard yükleniyor...")
+            try:
+                cmd = "winget install -e --id WireGuard.WireGuard --silent --accept-package-agreements --accept-source-agreements"
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    creationflags=CREATE_NO_WINDOW
+                )
+                time.sleep(2)
+                found = self.find_wireguard()
+                if found:
+                    self.wireguard_exe = found
+                    return True, "WireGuard başarıyla yüklendi."
+            except Exception:
+                pass
+
+        # Method 2: Direct download from official WireGuard website
+        report("[2/2] Resmi siteden WireGuard indiriliyor...")
+        installer_url = "https://download.wireguard.com/windows-client/wireguard-installer.exe"
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        installer_path = os.path.join(app_dir, "wireguard-installer.exe")
         try:
-            cmd = "winget install -e --id WireGuard.WireGuard --silent --accept-package-agreements --accept-source-agreements"
+            with open(installer_path, "ab") as _:
+                pass
+        except Exception:
+            installer_path = os.path.join(tempfile.gettempdir(), "wireguard-installer.exe")
+
+        try:
+            req = urllib.request.Request(
+                installer_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) DiscordWARP/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                with open(installer_path, "wb") as out_file:
+                    out_file.write(response.read())
+
+            report("WireGuard sürücüsü kuruluyor...")
+            # Run installer quietly with administrative rights
             subprocess.run(
-                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", cmd],
+                [installer_path, "/quiet"],
                 capture_output=True,
-                text=True,
-                timeout=120,
+                timeout=90,
                 creationflags=CREATE_NO_WINDOW
             )
-            self.wireguard_exe = self.find_wireguard()
-            return self.is_installed()
-        except Exception:
-            return False
+
+            # Poll for installation completion up to 20 seconds
+            for _ in range(10):
+                time.sleep(2)
+                found = self.find_wireguard()
+                if found:
+                    self.wireguard_exe = found
+                    return True, "WireGuard başarıyla indirildi ve kuruldu."
+
+            # If silent install didn't complete, launch installer GUI
+            report("WireGuard kurulum sihirbazı başlatılıyor...")
+            subprocess.run([installer_path], timeout=120)
+            time.sleep(2)
+            found = self.find_wireguard()
+            if found:
+                self.wireguard_exe = found
+                return True, "WireGuard başarıyla kuruldu."
+
+        except Exception as e:
+            return False, f"WireGuard otomatik kurulamadı: {str(e)}"
+
+        found = self.find_wireguard()
+        if found:
+            self.wireguard_exe = found
+            return True, "WireGuard başarıyla kuruldu."
+
+        return False, "WireGuard kurulumu tamamlanamadı. Lütfen resmi siteden indirip kurun."
 
     def is_tunnel_running(self):
         """Checks if the WireGuard tunnel service is active without console popup."""
