@@ -1,5 +1,9 @@
 # 🎮 Discord WARP Bypass (Sıfır Ping Kaybı!)
 
+<p align="center">
+  <img src="icon.png" width="120" height="120" alt="Discord WARP Logo">
+</p>
+
 Discord erişim engellerini **oyunlardaki pingini zerre kadar etkilemeden** ve **tarayıcı hızını düşürmeden** aşmak için geliştirilmiş, akıllı ve taşınabilir bir Windows aracıdır.
 
 Piyasadaki diğer VPN'lerin aksine tüm bilgisayar internetini yavaşlatmaz. **Sadece ve sadece Discord'un** internet trafiğini Cloudflare WARP tünelinden geçirir. Geri kalan her şey (oyunlar, Chrome, Spotify) normal internetinizden akmaya devam eder.
@@ -18,7 +22,7 @@ Piyasadaki diğer VPN'lerin aksine tüm bilgisayar internetini yavaşlatmaz. **S
 - **Orijinal Cloudflare WARP:** Ücretsiz ve sınırsız, resmi Cloudflare altyapısını kullanır.
 
 ### 💻 Nasıl Kullanılır?
-1. [Releases](#) sekmesinden `DiscordWARP.exe` dosyasını indirin ve açın.
+1. 📥 **[DiscordWARP.exe İndir](https://github.com/metehanguner/DiscordWARP/raw/main/DiscordWARP.exe)** (Kurulum gerektirmez, doğrudan çalışır).
 2. Program otomatik olarak yönetici izni (UAC) isteyecektir, izin verin. (WireGuard sistem servisini başlatmak için şarttır).
 3. Ekranda **"Bağlan"** şalterini açın.
 4. Tünel açıldığında Discord'unuz anında aktifleşecektir! Uygulamayı kapatıp arka plana gönderebilirsiniz. 
